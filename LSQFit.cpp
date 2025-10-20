@@ -42,7 +42,8 @@ void getY(const double *x, double *y, double *ey){
   }
 }
 
-
+/*
+//this beast won't do anything when I run my script so get commented silly method
 void leastsq(){
   double x[npoints];
   double y[npoints];
@@ -52,59 +53,86 @@ void leastsq(){
   auto tg = new TGraphErrors(npoints,x,y,0,ey);
   tg->Draw("alp");
 }
+*/
 
-int main(int argc, char **argv){
-  TApplication theApp("App", &argc, argv); // init ROOT App for displays
+//I run all of my stuff directly in ROOT so a lot of the skeleton script i threw out
+void LSQFit() {
+  gStyle->SetOptStat(0);
+  const int nexperiments = 1000;
 
-  // ******************************************************************************
-  // ** this block is useful for supporting both high and std resolution screens **
-  UInt_t dh = gClient->GetDisplayHeight()/2;   // fix plot to 1/2 screen height  
-  //UInt_t dw = gClient->GetDisplayWidth();
-  UInt_t dw = 1.1*dh;
-  // ******************************************************************************
+  double x[npoints], y[npoints], ey[npoints];
+  getX(x);
 
-  gStyle->SetOptStat(0); // turn off histogram stats box
+  TH2F *hab = new TH2F("hab", "Parameter b vs a;a;b", 60, 0.3, 0.7, 60, 1.1, 1.5);
+  TH2F *hac = new TH2F("hac", "Parameter c vs a;a;c", 60, 0.3, 0.7, 60, 0.3, 0.7);
+  TH2F *hbc = new TH2F("hbc", "Parameter c vs b;b;c", 60, 1.1, 1.5, 60, 0.3, 0.7);
+  TH1F *hchi_red = new TH1F("hchi", "Reduced #chi^{2};#chi^{2}_{red};Frequency", 80, 0, 3);
 
+  TH1F *ha = new TH1F("ha", "Parameter a;a;Frequency", 80, 0.3, 0.7);
+  TH1F *hb = new TH1F("hb", "Parameter b;b;Frequency", 80, 1.1, 1.5);
+  TH1F *hc = new TH1F("hc", "Parameter c;c;Frequency", 80, 0.3, 0.7);
+  TH1F *hchi = new TH1F("hchi", "#chi^{2};#chi^{2};Frequency", 80, 0, 30);
 
-  TCanvas *tc = new TCanvas("c1","Sample dataset",dw,dh);
+  for (int iexp = 0; iexp < nexperiments; iexp++) {
+    getY(x, y, ey);
 
-  double lx[npoints];
-  double ly[npoints];
-  double ley[npoints];
+    TMatrixD A(npoints, 3);
+    TVectorD Y(npoints);
+    TMatrixD W(npoints, npoints);
 
-  getX(lx);
-  getY(lx,ly,ley);
-  auto tgl = new TGraphErrors(npoints,lx,ly,0,ley);
-  tgl->SetTitle("Pseudoexperiment;x;y");
-  
-  // An example of one pseudo experiment
-  tgl->Draw("alp");
-  tc->Draw();
+    for (int i = 0; i < npoints; i++) {
+      double lx = Log(x[i]);
+      A(i, 0) = 1.0;
+      A(i, 1) = lx;
+      A(i, 2) = lx * lx;
+      Y(i) = y[i];
+      W(i, i) = 1.0 / (ey[i] * ey[i]);
+    }
 
+    TMatrixD AT(TMatrixD::kTransposed, A);
+    TMatrixD ATW = AT * W;
+    TMatrixD ATA = ATW * A;
+    TMatrixD cov(ATA);
+    cov.Invert();
 
-  
-  // *** modify and add your code here ***
+    TVectorD rhs = ATW * Y;
+    TVectorD best = cov * rhs;
 
-  TH2F *h1 = new TH2F("h1","Parameter b vs a;a;b",100,0,1,100,0,1);
-  TH2F *h2 = new TH2F("h2","Parameter c vs a;a;c",100,0,1,100,0,1);
-  TH2F *h3 = new TH2F("h3","Parameter c vs b;b;c",100,0,1,100,0,1);
-  TH1F *h4 = new TH1F("h4","reduced chi^2;;frequency",100,0,1);
+    double a = best[0];
+    double b = best[1];
+    double c = best[2];
 
-  // perform many least squares fits on different pseudo experiments here
-  // fill histograms w/ required data
-  
-  TCanvas *tc2 = new TCanvas("c2","my study results",200,200,dw,dh);
-  tc2->Divide(2,2);
-  tc2->cd(1); h1->Draw("colz");
-  tc2->cd(2); h2->Draw("colz");
-  tc2->cd(3); h3->Draw("colz");
-  tc2->cd(4); h4->Draw();
-  
-  tc2->Draw();
+    double chi2 = 0.0;
+    for (int i = 0; i < npoints; i++) {
+      double yfit = a + b * Log(x[i]) + c * Log(x[i]) * Log(x[i]);
+      chi2 += pow((y[i] - yfit) / ey[i], 2);
+    }
+    double chi2_reduced = chi2 / (npoints - 3);
 
-  // **************************************
-  
-  cout << "Press ^c to exit" << endl;
-  theApp.SetIdleTimer(30,".q");  // set up a failsafe timer to end the program  
-  theApp.Run();
+    hab->Fill(a, b);
+    hac->Fill(a, c);
+    hbc->Fill(b, c);
+    hchi_red->Fill(chi2_reduced);
+
+    ha->Fill(a);
+    hb->Fill(b);
+    hc->Fill(c);
+    hchi->Fill(chi2);
+  }
+
+  TCanvas *c = new TCanvas("c", "Chi2 Linear Fit Results", 1000, 800);
+  c->Divide(2, 2);
+  c->cd(1); hab->Draw("colz");
+  c->cd(2); hac->Draw("colz");
+  c->cd(3); hbc->Draw("colz");
+  c->cd(4); hchi_red->Draw();
+  c->SaveAs("redChi_root.png");
+
+  TCanvas *c2 = new TCanvas("c2", "Parameter and Chi2 Distributions", 1000, 800);
+  c2->Divide(2, 2);
+  c2->cd(1); ha->Draw();
+  c2->cd(2); hb->Draw();
+  c2->cd(3); hc->Draw();
+  c2->cd(4); hchi->Draw();
+  c2->SaveAs("chi_root.png");
 }
